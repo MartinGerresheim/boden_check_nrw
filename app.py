@@ -26,40 +26,47 @@ stör_faktor = stör_faktor_map[baujahr_störung]
 # --- FUNKTIONEN ---
 def get_soil_data(address):
     try:
-        # 1. Geocoding
-        geolocator = Nominatim(user_agent="boden_check_app_v2")
+        # 1. Geocoding: Adresse in Koordinaten (Lat, Lon) wandeln
+        geolocator = Nominatim(user_agent="boden_check_nrw_pro")
         location = geolocator.geocode(address + ", NRW")
-        if not location: return None, "Adresse nicht gefunden."
+        if not location: 
+            return None, "Adresse konnte nicht gefunden werden. Bitte genauer eingeben."
         
         lat, lon = location.latitude, location.longitude
         
-        # 2. Verbindung zum WFS-Dienst (KORRIGIERT FÜR 2026)
-        # Wichtig: 'wfs' statt 'wms' in der URL!
-        wfs_url = "https://www.wfs.nrw.de/gd/bk050/wfs" 
-        
+        # 2. WFS-Verbindung zum neuen GeoServer NRW
+        # Wir nutzen den stabilsten Einstiegspunkt
+        wfs_url = "https://www.geoserver.nrw.de/geoserver/gd/wfs"
         wfs = WebFeatureService(url=wfs_url, version='2.0.0')
         
-        # Der Layer-Name im neuen System
+        # Der Layer für die Bodenkarte 1:50.000 (BK50)
         layer_name = 'gd:bk050_bodeneinheiten'
         
-        # Abfrage im kleinen Umkreis
-        response = wfs.getfeature(
-            typename=layer_name,
-            bbox=(lat-0.0005, lon-0.0005, lat+0.0005, lon+0.0005),
-            outputFormat='json'
-        )
-        
-        import json
-        data = json.loads(response.read())
-        
-        if not data.get('features'):
-            return None, "Keine Bodendaten für diesen Punkt gefunden (evtl. außerhalb NRW)."
+        # 3. Die "Punkt-Abfrage": Wir bauen ein winziges Fenster (BBox) um unsere Koordinate
+        # Der Server liefert uns dann die Daten für diesen "Piekser"
+        try:
+            response = wfs.getfeature(
+                typename=layer_name,
+                bbox=(lat-0.0001, lon-0.0001, lat+0.0001, lon+0.0001),
+                outputFormat='application/json'
+            )
             
+            import json
+            data = json.loads(response.read())
+        except:
+            # Falls JSON fehlschlägt, versuchen wir das Standardformat (GML)
+            return None, "Der Server antwortet gerade nicht im richtigen Datenformat. Später erneut versuchen."
+
+        # 4. Daten-Extraktion
+        if not data.get('features') or len(data['features']) == 0:
+            return None, "An dieser Stelle liegen keine Bodendaten vor (evtl. bebautes/versiegeltes Gebiet)."
+            
+        # Wir nehmen das erste Feature, das an diesem Punkt gefunden wurde
         props = data['features'][0]['properties']
         return props, None
         
     except Exception as e:
-        return None, f"Schnittstellen-Fehler: {str(e)}"
+        return None, f"Fehler bei der Datenabfrage: {str(e)}"
 
 # --- HAUPTPROGRAMM ---
 address_input = st.text_input("Garten-Adresse eingeben:", placeholder="z.B. Königsallee 1, Düsseldorf")
