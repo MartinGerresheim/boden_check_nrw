@@ -27,33 +27,39 @@ stör_faktor = stör_faktor_map[baujahr_störung]
 def get_soil_data(address):
     try:
         # 1. Geocoding
-        geolocator = Nominatim(user_agent="boden_check_app")
+        geolocator = Nominatim(user_agent="boden_check_app_v2")
         location = geolocator.geocode(address + ", NRW")
         if not location: return None, "Adresse nicht gefunden."
         
         lat, lon = location.latitude, location.longitude
         
-        # 2. Verbindung zum WFS-Dienst (AKTUALISIERTE URL)
-        # Die neue Adresse des Geoportal-Servers NRW
-        wfs_url = "https://www.wms.nrw.de/gd/bk050/wfs" 
+        # 2. Verbindung zum WFS-Dienst (KORRIGIERT FÜR 2026)
+        # Wichtig: 'wfs' statt 'wms' in der URL!
+        wfs_url = "https://www.wfs.nrw.de/gd/bk050/wfs" 
         
         wfs = WebFeatureService(url=wfs_url, version='2.0.0')
         
-        # Wir nutzen den Layer für die Bodeneinheiten (BK50)
+        # Der Layer-Name im neuen System
         layer_name = 'gd:bk050_bodeneinheiten'
         
+        # Abfrage im kleinen Umkreis
         response = wfs.getfeature(
             typename=layer_name,
             bbox=(lat-0.0005, lon-0.0005, lat+0.0005, lon+0.0005),
             outputFormat='json'
         )
-        data = pd.read_json(response)
         
-        # Wir extrahieren die relevanten Eigenschaften aus dem ersten Treffer
+        import json
+        data = json.loads(response.read())
+        
+        if not data.get('features'):
+            return None, "Keine Bodendaten für diesen Punkt gefunden (evtl. außerhalb NRW)."
+            
         props = data['features'][0]['properties']
         return props, None
+        
     except Exception as e:
-        return None, f"Datenfehler: {str(e)}"
+        return None, f"Schnittstellen-Fehler: {str(e)}"
 
 # --- HAUPTPROGRAMM ---
 address_input = st.text_input("Garten-Adresse eingeben:", placeholder="z.B. Königsallee 1, Düsseldorf")
