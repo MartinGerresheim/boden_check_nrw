@@ -33,13 +33,17 @@ def get_soil_data(address):
         
         lat, lon = location.latitude, location.longitude
         
-        # 2. WFS Abfrage (Beispiel-Layer BÜK 500 für die Demo)
-        wfs_url = "https://www.wfs.nrw.de/gd/buek500/wfs"
+        # 2. Verbindung zum WFS-Dienst (AKTUALISIERTE URL)
+        # Die neue Adresse des Geoportal-Servers NRW
+        wfs_url = "https://www.wms.nrw.de/gd/bk050/wfs" 
+        
         wfs = WebFeatureService(url=wfs_url, version='2.0.0')
         
-        # Wir fragen ein kleines Umfeld (BBox) ab
+        # Wir nutzen den Layer für die Bodeneinheiten (BK50)
+        layer_name = 'gd:bk050_bodeneinheiten'
+        
         response = wfs.getfeature(
-            typename='buek500:is_m_layer',
+            typename=layer_name,
             bbox=(lat-0.0005, lon-0.0005, lat+0.0005, lon+0.0005),
             outputFormat='json'
         )
