@@ -1,6 +1,6 @@
 streamlit
 pandas
-geopy
-owslib
 requests
-json
+geopy
+lxml
+html5lib
