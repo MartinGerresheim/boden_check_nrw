@@ -1,111 +1,58 @@
 import streamlit as st
+import requests
 import pandas as pd
 from geopy.geocoders import Nominatim
-from owslib.wfs import WebFeatureService
 
-# --- KONFIGURATION & UI SETUP ---
-st.set_page_config(page_title="Boden-Check NRW", page_icon="🚜", layout="centered")
-
-st.title("🚜 Boden-Check NRW")
-st.markdown("### Strategische Werkzeugwahl für Drainage-Projekte")
-st.info("Dieses Tool nutzt Live-Daten des Geologischen Dienstes NRW.")
-
-# --- SIDEBAR: ANTHROPOGENER FAKTOR ---
-st.sidebar.header("Standort-Kontext")
-baujahr_störung = st.sidebar.select_slider(
-    "Zustand des Geländes (Baujahr/Eingriff)",
-    options=["Altbau / Natürlich", "Bestand (10-30 J.)", "Neubau / Baustelle"],
-    value="Altbau / Natürlich",
-    help="Neubauten weisen oft starke Bodenverdichtungen durch Baumaschinen auf."
-)
-
-# Mapping der Störfaktoren
-stör_faktor_map = {"Altbau / Natürlich": 1.0, "Bestand (10-30 J.)": 1.1, "Neubau / Baustelle": 1.3}
-stör_faktor = stör_faktor_map[baujahr_störung]
-
-# --- FUNKTIONEN ---
-def get_soil_data(address):
+def get_soil_data_final(address):
     try:
         # 1. Geocoding
-        geolocator = Nominatim(user_agent="boden_check_nrw_2026")
+        geolocator = Nominatim(user_agent="bodencheck_nrw_2026")
         location = geolocator.geocode(address + ", NRW")
-        if not location: 
+        if not location:
             return None, "Adresse nicht gefunden."
         
         lat, lon = location.latitude, location.longitude
         
-        # 2. Die exakte URL, die das Geoportal NRW nutzt
-        # Wir nutzen hier den OGC-Standard-Einstieg
-        wfs_url = "https://www.wms.nrw.de/gd/bk050/wfs"
+        # 2. Die funktionierende URL aus deinem Test
+        url = "https://www.wms.nrw.de/gd/bk050"
         
-        wfs = WebFeatureService(url=wfs_url, version='2.0.0')
+        # Parameter für die Abfrage (GetFeatureInfo)
+        # Wir nutzen 'is_m_layer', da dieser im Test funktioniert hat
+        params = {
+            "SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetFeatureInfo",
+            "LAYERS": "is_m_layer", "QUERY_LAYERS": "is_m_layer",
+            "I": 50, "J": 50, "WIDTH": 100, "HEIGHT": 100, "CRS": "EPSG:4326",
+            "BBOX": f"{lat-0.001},{lon-0.001},{lat+0.001},{lon+0.001}",
+            "INFO_FORMAT": "text/html" # Wir holen HTML, da JSON nicht unterstützt wird
+        }
         
-        # Layer-Name im WMS.NRW System
-        layer_name = 'bk050:is_m_layer' 
+        response = requests.get(url, params=params, timeout=15)
         
-        # 3. Abfrage
-        response = wfs.getfeature(
-            typename=layer_name,
-            bbox=(lat-0.0005, lon-0.0005, lat+0.0005, lon+0.0005),
-            outputFormat='json'
-        )
+        if "Boden" not in response.text and "bk050" not in response.text:
+            return None, "Keine Bodendaten an dieser Position gefunden."
+
+        # 3. HTML-Tabelle in Daten umwandeln
+        # Wir nutzen pandas, um die Tabelle aus dem HTML-Text zu ziehen
+        tables = pd.read_html(response.text)
+        if tables:
+            df = tables[0] # Die erste Tabelle enthält die Daten
+            # Wir wandeln die Tabelle in ein Wörterbuch um (Spalte 0 = Name, Spalte 1 = Wert)
+            data_dict = dict(zip(df.iloc[:, 0], df.iloc[:, 1]))
+            return data_dict, None
         
-        import json
-        data = json.loads(response.read())
-        
-        if not data.get('features'):
-            return None, "Keine Daten an diesem Punkt. (Evtl. versiegelte Fläche?)"
-            
-        return data['features'][0]['properties'], None
-        
+        return None, "Daten konnten nicht gelesen werden."
+
     except Exception as e:
-        # Konstruktive Fehlermeldung
-        return None, f"Verbindung zum NRW-Server fehlgeschlagen. Tipp: Später versuchen oder Bodenart manuell schätzen. (Details: {str(e)})"
+        return None, f"Technischer Fehler: {str(e)}"
 
-# --- HAUPTPROGRAMM ---
-address_input = st.text_input("Garten-Adresse eingeben:", placeholder="z.B. Königsallee 1, Düsseldorf")
+# --- STREAMLIT UI ---
+st.title("Bodencheck NRW - Finaler Zugriff")
+addr = st.text_input("Adresse in NRW eingeben:", "De-Greiff-Straße 195, Krefeld")
 
-if st.button("Analyse starten"):
-    if address_input:
-        with st.spinner("Analysiere Bodenschichten..."):
-            props, error = get_soil_data(address_input)
-            
-            if error:
-                st.error(error)
-            else:
-                # Extraktion der "Big Five" (vereinfacht für den Prototyp)
-                bodenart = props.get('B_ART_OB', 'L') # Default Lehm falls unbekannt
-                gw_stufe = props.get('GW_ST', '1')
-                
-                # --- MAPPING LOGIK ---
-                if "L" in bodenart or "T" in bodenart:
-                    basis_geraet = "Minibagger 1.5t - 1.8t"
-                    klasse = "4-5"
-                    basis_faktor = 1.5
-                else:
-                    basis_geraet = "Lochspaten / Handarbeit"
-                    klasse = "3"
-                    basis_faktor = 1.0
-                
-                finaler_faktor = round(basis_faktor * stör_faktor, 2)
-                
-                # --- AUSGABE ---
-                st.success(f"### Empfohlenes Gerät: {basis_geraet}")
-                
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Bodenklasse", klasse)
-                c2.metric("Erschwernis", f"x{finaler_faktor}")
-                c3.metric("Grundwasser", "Fern" if gw_stufe == '1' else "Nah")
-                
-                # Detail-Tabelle
-                st.write("#### Geologische Details (Rohdaten):")
-                st.json({
-                    "Bodenart (Code)": bodenart,
-                    "Grundwasser-Stufe": gw_stufe,
-                    "Beschreibung": props.get('BESCHREIBUNG', 'Keine Beschreibung verfügbar')
-                })
-                
-                if stör_faktor > 1.0:
-                    st.warning(f"Hinweis: Der Faktor wurde aufgrund der Auswahl '{baujahr_störung}' erhöht.")
+if st.button("Boden analysieren"):
+    data, error = get_soil_data_final(addr)
+    if error:
+        st.error(error)
     else:
-        st.warning("Bitte geben Sie eine Adresse ein.")
+        st.success("Daten erfolgreich vom GD NRW empfangen!")
+        st.table(pd.DataFrame(data.items(), columns=["Eigenschaft", "Wert"]))
